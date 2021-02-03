@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <list>
 #include <csignal>
+#include <tuple>
 
 #include "termcolors.hpp"
 #include "getinput.hpp"
@@ -16,11 +17,11 @@ using namespace std;
 
 int main(int argc, char **argv){
     char buf[1000];
-    list<pair<pid_t, wordexp_t *>> bgProcs;
+    list<tuple<pid_t, wordexp_t *, int *>> bgProcs;
 
 
     signal(SIGINT, signalHandler);
-    signal(SIGTSTP, signalHandler);
+    // signal(SIGTSTP, signalHandler);
 
     system("setterm -cursor on");
     system("setterm -blink on");
@@ -54,18 +55,79 @@ int main(int argc, char **argv){
 
                 //Parent process instructions
                 else{
-                    bgProcs.push_back(make_pair(pid, p));
-                    waitpid(pid, NULL, WNOHANG);
+                    int *retVal;
+                    retVal = (int *)malloc(sizeof(int));
+                    *retVal = 256;
+                    bgProcs.push_back(make_tuple(pid, p, retVal));
+                    waitpid(pid, retVal, WNOWAIT);
                 }
             }
             
             else if(!strcmp(p->we_wordv[0], "bglist")){
                 int procCount = 0;
+                int returnVal = 255;
                 for(auto i:bgProcs){
-                    cout << "[" << procCount++ << "]+\tRunning\t\t";
-                    for(int j = 1; j < i.second->we_wordc; j++)
-                        cout << i.second->we_wordv[j] << " ";
+                    waitpid(get<0>(i), &returnVal, WSTOPPED | WNOHANG);
+                    if(WIFSTOPPED(returnVal))
+                        cout << "[" << procCount++ << "]+ Stopped\t\t";
+
+                    else
+                        cout << "[" << procCount++ << "]+ Running\t\t";
+
+                    for(int j = 1; j < get<1>(i)->we_wordc; j++)
+                        cout << get<1>(i)->we_wordv[j] << " ";
                     cout << endl;
+                }
+            }
+
+            else if(!strcmp(p->we_wordv[0], "bgkill")){
+                int procCounter = 0;
+                int n = atoi(p->we_wordv[1]);
+                for(auto i = bgProcs.begin(); i != bgProcs.end(); i++){
+                    if(procCounter == n){
+                        kill(get<0>(*i), SIGTERM);
+                        bgProcs.erase(i);
+                        cout << "[" << n << "]+ Killed\t\t";
+                        for(int j = 1; j < get<1>(*i)->we_wordc; j++)
+                            cout << get<1>(*i)->we_wordv[j] << " ";
+                        cout << endl; 
+                        break;
+                    }
+                    procCounter++;
+                }
+            }
+
+            else if(!strcmp(p->we_wordv[0], "bgstop")){
+                int procCounter = 0;
+                int n = atoi(p->we_wordv[1]);
+                for(auto i = bgProcs.begin(); i != bgProcs.end(); i++){
+                    if(procCounter == n){
+                        kill(get<0>(*i), SIGSTOP);
+                        // bgProcs.erase(i);
+                        cout << "[" << n << "]+ Stopped\t\t";
+                        for(int j = 1; j < get<1>(*i)->we_wordc; j++)
+                            cout << get<1>(*i)->we_wordv[j] << " ";
+                        cout << endl; 
+                        break;
+                    }
+                    procCounter++;
+                }
+            }
+
+            else if(!strcmp(p->we_wordv[0], "bgstart")){
+                int procCounter = 0;
+                int n = atoi(p->we_wordv[1]);
+                for(auto i = bgProcs.begin(); i != bgProcs.end(); i++){
+                    if(procCounter == n){
+                        kill(get<0>(*i), SIGCONT);
+                        // bgProcs.erase(i);
+                        cout << "[" << n << "]+ Continued\t\t";
+                        for(int j = 1; j < get<1>(*i)->we_wordc; j++)
+                            cout << get<1>(*i)->we_wordv[j] << " ";
+                        cout << endl; 
+                        break;
+                    }
+                    procCounter++;
                 }
             }
 
@@ -83,8 +145,29 @@ int main(int argc, char **argv){
                     free(p);
                 }
             }
+            
+            
+
         }
         
+        //Check if any background process is finished
+        for(auto i = bgProcs.begin(); i != bgProcs.end(); i++){
+                int procCount = 0;
+                int returnVal = 255;
+                waitpid(get<0>(*i), &returnVal, WNOHANG);
+                if(returnVal == 0){
+                    cout << "[" << procCount++ << "]+ Done\t\t";
+                    for(int j = 1; j < get<1>(*i)->we_wordc; j++)
+                        cout << get<1>(*i)->we_wordv[j] << " ";
+                    cout << endl;
+
+                    wordfree(get<1>(*i));
+                    free(get<2>(*i));
+                    i = bgProcs.erase(i);
+                }
+                
+
+            }
         
     }
     exit(0);
